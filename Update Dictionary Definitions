@@ -1,0 +1,208 @@
+/***********************************
+PDW Data Dictionary Update Definitions
+
+PURPOSE
+
+    Provides four macros for managing
+    PDW Data Dictionary variable -
+    definition additions/updates:
+    (1) view_definition
+    (2) clear_updated
+    (3) update_definition
+    (4) create_definition
+
+    Macro (2) must be run on a
+    variable - definition before
+    (3) can be used, and (4) will
+    only run on variable - definitions
+    that don't already exist. Always
+    use (1) before using any other
+    macros - this will help to avoid
+    making input errors that result
+    in unwanted changes.
+
+NOTES
+
+    For new_description: write in
+    a .TXT file without any carriage
+    returns and then paste into SAS.
+
+    Don’t add quotes to the macro
+    parameters except as indicated
+    in the below Example for the
+    description.
+
+USAGE
+
+  You will first need to either
+  add LET statements or else add
+  a user prompt for the user-
+  defined variables.
+***********************************/
+
+OPTIONS NONOTES;
+%LET in_variable = %SYSFUNC(LOWCASE(&in_variable.));
+
+LIBNAME datadef "/sasprod/dg/shared/PDW Data Dictionary/Code";
+
+%MACRO view_definition(original_variable, original_core_dataset);
+    /* Checks for a variable-definition and prints the record
+       (if it exists) to the SAS log. */
+
+    PROC SQL;
+        /* Pulls the same record twice to enable
+           (a) copy-pasting from the Output Data
+           tab and (b) an easy-to-read HTML output. */
+
+        CREATE TABLE view AS
+            SELECT
+                updated
+                , variable
+                , core_dataset
+                , description
+            FROM datadef.definition_source
+            WHERE LOWCASE(Core_Dataset) = LOWCASE("&original_core_dataset.")
+                AND LOWCASE(Variable) = LOWCASE("&original_variable.")
+            ;
+
+        SELECT
+            updated
+            , variable
+            , core_dataset
+            , description
+        FROM datadef.definition_source
+        WHERE LOWCASE(Core_Dataset) = LOWCASE("&original_core_dataset.")
+            AND LOWCASE(Variable) = LOWCASE("&original_variable.")
+        ;
+
+    QUIT;
+
+    %PUT; %PUT view_definition: If the output display a null dataset, the variable-definition needs to be created first.; %PUT;
+
+%MEND view_definition;
+
+%MACRO clear_updated(original_variable, original_core_dataset);
+    /* Clears the updated date on a given variable-definition
+       to allow for description updates and to ensure the
+       correct Updated data is automatically assigned when the
+       Data Dictionary code is next executed.*/
+
+    PROC SQL NOPRINT;
+        UPDATE datadef.definition_source
+        SET Updated = .
+        WHERE LOWCASE(Core_Dataset) = LOWCASE("&original_core_dataset.")
+            AND LOWCASE(Variable) = LOWCASE("&original_variable.")
+        ;
+    QUIT;
+
+    %view_definition(&original_variable., &original_core_dataset.)
+
+    %PUT; %PUT clear_updated result: The Updated column was cleared for variable %UPCASE(&original_variable.) in %UPCASE(&original_core_dataset.).; %PUT; 
+    
+%MEND clear_updated;
+
+%MACRO update_definition(original_variable, original_core_dataset, revised_description);
+
+    %clear_updated(&original_variable., &original_core_dataset.) 
+
+    /* Revise the description */
+    PROC SQL NOPRINT;
+        UPDATE datadef.definition_source
+        SET Description = "&revised_description."    /* double-quotes are intentional */
+        WHERE LOWCASE(Core_Dataset) = LOWCASE("&original_core_dataset.")
+            AND LOWCASE(Variable) = LOWCASE("&original_variable.") 
+            AND Updated IS NULL   /* ensures no old definitions are accidently edited */
+        ;
+    QUIT;
+
+    %view_definition(&original_variable., &original_core_dataset.)
+
+    %PUT; %PUT update_definition result: The record was updated for variable %UPCASE(&original_variable.) in %UPCASE(&original_core_dataset.).; %PUT; 
+    
+%MEND update_definition;
+
+%MACRO create_definition(new_variable, core_dataset, new_description);
+
+    /* Ensure the variable-definition doesn't already exist */
+    PROC SQL NOPRINT;
+        SELECT COUNT(*)
+        INTO :count
+        FROM datadef.definition_source
+        WHERE LOWCASE(Core_Dataset) = LOWCASE("&core_dataset.")
+            AND LOWCASE(Variable) = LOWCASE("&new_variable.")
+        ;
+    QUIT;
+
+    %IF (&count. = %SYSFUNC(CATS(0)))
+    %THEN 
+        %DO;
+
+            /* Create a new variable-definition record */
+            PROC SQL NOPRINT;
+                INSERT INTO datadef.definition_source (
+                    Core_Dataset
+                    , Variable
+                    , Description
+                )
+                VALUES (
+                    "&core_dataset."
+                    , "&new_variable."
+                    , "&new_description."
+                )
+                ;
+            QUIT;
+
+            %PUT; %PUT create_definition result: A new record was made for variable %UPCASE(&new_variable.) in %UPCASE(&core_dataset.).; %PUT; 
+
+        %END;
+    %ELSE
+        %DO;
+
+            %PUT; %PUT create_definition result: Variable %UPCASE(&new_variable.) in %UPCASE(&core_dataset.) already exists, so a new record was not created.; %PUT;
+
+        %END;
+
+    %view_definition(&new_variable., &core_dataset.)
+
+%MEND create_definition;
+
+/* Example
+%view_definition(interest, finclms)
+%clear_updated(interest, finclms)
+%update_definition(interest, finclms, %BQUOTE("Interest."))
+%create_definition(interest, finclms, %BQUOTE("Interest."))
+*/
+
+%MACRO execute;
+
+    /* Append all select actions from the prompt */
+
+    %IF %EVAL(&in_action_count.-1)
+        /* PROMPT-VARIABLE_count created whenever 
+           the user inputs a PROMPT-VARIABLE. It
+           indicates how many objects the user
+           input (always 1 unless the user is
+           allowed to input a list). */
+    %THEN
+        %DO y=2 %TO &in_action_count.;
+            %LET in_action = %SYSFUNC(CATX(-, &in_action., &&in_action&y..));
+        %END;
+    %ELSE; /* do nothing if only one action was selected */
+        
+    %PUT; %PUT in_action=&in_action.; %PUT; 
+
+    /* Execute the chosen action(s) */
+    %IF %SYSFUNC(FIND(&in_action., View))
+    %THEN %view_definition(&in_variable., &in_dataset.);
+    %ELSE;
+
+    %IF %SYSFUNC(FIND(&in_action., Update))
+    %THEN %update_definition(&in_variable., &in_dataset., %BQUOTE(&in_description.));
+    %ELSE;
+
+    %IF %SYSFUNC(FIND(&in_action., Create))
+    %THEN %create_definition(&in_variable., &in_dataset., %BQUOTE(&in_description.));
+    %ELSE;
+
+%MEND execute;
+%execute
