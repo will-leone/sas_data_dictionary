@@ -21,6 +21,13 @@ Purpose:
 (4) Insert previously curated definitions
     (see "Update Definitions.sas")
     at the aggregate level.
+    
+USAGE
+
+  You will first need to either
+  add LET statements or else add
+  a user prompt for the user-
+  defined variables.
 
 ********************************************/
 
